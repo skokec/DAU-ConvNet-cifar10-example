@@ -1,6 +1,6 @@
 ## CIFAR-10 example for DAU-ConvNet
 
-Example for using DAU-ConvNet with simple three layer architecture on CIFAR-10 dataset.
+Example for using DAU-ConvNet with simple three layer architecture on CIFAR-10 dataset. Based on original TensorFlow CIFAR-10 tutorial. Modified only network architecture in cifar10.py ```inference()``` method.
 
 You need to have [DAU-ConvNet TensorFlow plugin](https://https://github.com/skokec/DAU-ConvNet) compiled, installed and available in python system path.
  
