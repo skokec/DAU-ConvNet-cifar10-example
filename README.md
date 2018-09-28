@@ -1,7 +1,10 @@
 ## CIFAR-10 example for DAU-ConvNet
 
 Example for using DAU-ConvNet with simple three layer architecture on CIFAR-10 dataset.
+
+You need to have [DAU-ConvNet TensorFlow plugin](https://https://github.com/skokec/DAU-ConvNet) compiled, installed and available in python system path.
  
+## Original README
 
 **NOTE: For users interested in multi-GPU, we recommend looking at the newer [cifar10_estimator](https://github.com/tensorflow/models/tree/master/tutorials/image/cifar10_estimator) example instead.**
 
