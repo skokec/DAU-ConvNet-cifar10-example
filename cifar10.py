@@ -58,6 +58,7 @@ from tensorflow.python.ops import variable_scope
 
 from dau_conv import dau_conv2d
 from dau_conv import DAUGridMean
+from dau_conv import dau_conv2d_tf
 
 import cifar10_input
 
@@ -70,6 +71,8 @@ tf.app.flags.DEFINE_string('data_dir', '/tmp/cifar10_data',
                            """Path to the CIFAR-10 data directory.""")
 tf.app.flags.DEFINE_boolean('use_fp16', False,
                             """Train the model using fp16.""")
+tf.app.flags.DEFINE_string('backend', 'dau_conv',
+                           """Version of the backend (cnn, dau_conv or dau_conv_tf.""")
 
 # Global constants describing the CIFAR-10 data set.
 IMAGE_SIZE = cifar10_input.IMAGE_SIZE
@@ -202,6 +205,17 @@ def inputs(eval_data):
   return images, labels
 
 def inference(images,in_training=True):
+  if FLAGS.backend.lower() == 'cnn':
+    return inference_vanilla_cnn(images,in_training)
+  elif FLAGS.backend.lower() == 'dau_conv':
+    return inference_dau_conv(images,in_training)
+  elif FLAGS.backend.lower() == 'dau_conv_tf':
+    return inference_dau_conv_tf(images,in_training)
+  else:
+    raise Exception('Invalid "backend" arg (%s)! Allowed only: "cnn", "dau_conv", and "dau_conv_tf"' % FLAGS.backend.lower())
+  
+
+def inference_dau_conv(images,in_training=True):
     inputs = images
     scope = ''
     with variable_scope.variable_scope(scope, 'cifar10', [inputs]) as sc:
@@ -235,30 +249,30 @@ def inference(images,in_training=True):
 
             inputs = tf.transpose(inputs, [0,3,1,2])
             print("input: ",inputs.shape)
-            net = layers_lib.repeat(inputs, 1, dau_conv2d, 96, dau_units=(2,2), max_kernel_size=25,
+            net = layers_lib.repeat(inputs, 1, dau_conv2d, 96, dau_units=(2,2), max_kernel_size=17,
                                     mu2_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=1),
                                     mu1_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=2),
                                     #mu2_initializer=tf.constant_initializer(0),
                                     #mu1_initializer=tf.constant_initializer(0),
-                                    dau_unit_border_bound=0.0,
+                                    dau_unit_border_bound=2.0,
                                     mu_learning_rate_factor=1, data_format='NCHW', scope='dau_conv1')
             net = layers_lib.max_pool2d(net, [2, 2], scope='pool1', data_format="NCHW")
             #'''
-            net = layers_lib.repeat(net, 1, dau_conv2d, 96, dau_units=(2,2), max_kernel_size=12,
+            net = layers_lib.repeat(net, 1, dau_conv2d, 96, dau_units=(2,2), max_kernel_size=17,
                                     mu2_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=1),
                                     mu1_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=2),
                                     #mu2_initializer=tf.constant_initializer(0),
                                     #mu1_initializer=tf.constant_initializer(0),
-                                    dau_unit_border_bound=0.0,
+                                    dau_unit_border_bound=2.0,
                                     mu_learning_rate_factor=1, data_format='NCHW', scope='dau_conv2')
             net = layers_lib.max_pool2d(net, [2, 2], scope='pool2', data_format="NCHW")
 
-            net = layers_lib.repeat(net, 1, dau_conv2d, 192, dau_units=(2,2), max_kernel_size=12,
+            net = layers_lib.repeat(net, 1, dau_conv2d, 192, dau_units=(2,2), max_kernel_size=17,
                                     mu2_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=1),
                                     mu1_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=2),
                                     #mu2_initializer=tf.constant_initializer(0),
                                     #mu1_initializer=tf.constant_initializer(0),
-                                    dau_unit_border_bound=0.0,
+                                    dau_unit_border_bound=2.0,
                                     mu_learning_rate_factor=1, data_format='NCHW', scope='dau_conv3')
             net = layers_lib.max_pool2d(net, [2, 2], scope='pool3', data_format="NCHW")
             #'''
@@ -271,6 +285,78 @@ def inference(images,in_training=True):
 
 
     return net
+
+def inference_dau_conv_tf(images,in_training=True):
+    inputs = images
+    scope = ''
+    with variable_scope.variable_scope(scope, 'cifar10', [inputs]) as sc:
+        end_points_collection = sc.original_name_scope + '_end_points'
+    # Collect outputs for conv2d, max_pool2d
+    with arg_scope(
+            [layers.conv2d, dau_conv2d_tf, layers.fully_connected, layers_lib.max_pool2d, layers.batch_norm],
+            outputs_collections=end_points_collection):
+
+        # Apply specific parameters to all conv2d layers (to use batch norm and relu - relu is by default)
+        with arg_scope([layers.conv2d, dau_conv2d_tf, layers.fully_connected],
+                       weights_regularizer=regularizers.l2_regularizer(0.1),
+                       weights_initializer=tf.contrib.layers.xavier_initializer(uniform=False),
+                       #weights_initializer= lambda shape,dtype=tf.float32, partition_info=None: tf.contrib.layers.xavier_initializer(uniform=False),
+                       biases_initializer=None,
+                       #normalizer_fn=layers.batch_norm,
+                       #normalizer_params={'center': True,
+                       #                   'scale': True,
+                       #                   #'is_training': in_training,
+                       #                   'decay': BATCHNORM_MOVING_AVERAGE_DECAY, # Decay for the moving averages.
+                       #                   'epsilon': 0.001, # epsilon to prevent 0s in variance.
+                       #                   'data_format':'NCHW',
+                       #                },
+                       normalizer_fn=tf.layers.batch_normalization,
+                        normalizer_params=dict(center=True,
+                                               scale=True,
+                                               #momentum=BATCHNORM_MOVING_AVERAGE_DECAY, # Decay for the moving averages.
+                                               epsilon=0.001, # epsilon to prevent 0s in variance.
+                                               axis=-1,
+                                               training=in_training)):
+
+            
+            print("input: ",inputs.shape)
+            net = layers_lib.repeat(inputs, 1, dau_conv2d_tf, 96, dau_units=(2,2), max_kernel_size=17,
+                                    mu2_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=1),
+                                    mu1_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=2),
+                                    #mu2_initializer=tf.constant_initializer(0),
+                                    #mu1_initializer=tf.constant_initializer(0),
+                                    dau_unit_border_bound=2.0,
+                                    mu_learning_rate_factor=1, data_format='NHWC', scope='dau_conv1')
+            net = layers_lib.max_pool2d(net, [2, 2], scope='pool1', data_format="NHWC")
+            #'''
+            net = layers_lib.repeat(net, 1, dau_conv2d_tf, 96, dau_units=(2,2), max_kernel_size=17,
+                                    mu2_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=1),
+                                    mu1_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=2),
+                                    #mu2_initializer=tf.constant_initializer(0),
+                                    #mu1_initializer=tf.constant_initializer(0),
+                                    dau_unit_border_bound=2.0,
+                                    mu_learning_rate_factor=1, data_format='NHWC', scope='dau_conv2')
+            net = layers_lib.max_pool2d(net, [2, 2], scope='pool2', data_format="NHWC")
+
+            net = layers_lib.repeat(net, 1, dau_conv2d_tf, 192, dau_units=(2,2), max_kernel_size=17,
+                                    mu2_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=1),
+                                    mu1_initializer=DAUGridMean(dau_units=(2,2), max_value=4, dau_unit_axis=2),
+                                    #mu2_initializer=tf.constant_initializer(0),
+                                    #mu1_initializer=tf.constant_initializer(0),
+                                    dau_unit_border_bound=2.0,
+                                    mu_learning_rate_factor=1, data_format='NHWC', scope='dau_conv3')
+            net = layers_lib.max_pool2d(net, [2, 2], scope='pool3', data_format="NHWC")
+            #'''
+            net = tf.reshape(net, [net.shape[0], -1])
+
+            net = layers.fully_connected(net, NUM_CLASSES, scope='fc4',
+                                         activation_fn=None,
+                                         normalizer_fn=None,
+                                         biases_initializer=tf.constant_initializer(0))
+
+
+    return net
+
 
 def inference_vanilla_cnn(images,in_training=True):
     inputs = images
